@@ -46,16 +46,34 @@ return $ValidationResults
 
 
 
-Current version: Pulled from registry key for chrome.exe.
+<#
+.SYNOPSIS
+  Adds a one-time self-deletion timer after first execution.
+#>
 
-Latest version: Pulled directly from Google’s public API (versionhistory.googleapis.com).
+# --- CONFIGURATION ---
+[int]$ExpireHours = 24       # change to 0.0167 (≈1 min) for testing
+[string]$TaskName = "SelfDelete_$([guid]::NewGuid())"
+# ----------------------
 
-Comparison: Uses [version] type-safe comparison to avoid string mismatches.
+# Path of the running script
+$ScriptPath = $MyInvocation.MyCommand.Path
 
-Return: A [PSCustomObject] with:
+# Metadata file to mark first run
+$MetaFile = "$env:ProgramData\$(Split-Path $ScriptPath -Leaf).meta"
 
-Results → comment text showing both versions.
+# Create metadata and scheduled cleanup on first run
+if (-not (Test-Path $MetaFile)) {
+    (Get-Date).ToString('o') | Out-File $MetaFile -Encoding utf8
+    $ExpireAt = (Get-Date).AddHours($ExpireHours)
 
-Valid → $true if current ≥ latest; $false otherwise.
+    # Create a one-time scheduled task that deletes this file at expiry
+    $Trigger = New-ScheduledTaskTrigger -Once -At $ExpireAt
+    $Action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+               -Argument "-NoProfile -Command `"Remove-Item -Force '$ScriptPath'; Remove-Item -Force '$MetaFile'`""
+    Register-ScheduledTask -TaskName $TaskName -Trigger $Trigger -Action $Action | Out-Null
 
-Statuses: Automatically updates STIG check to NotAFinding or Open based on result.
+    Write-Host "Self-delete scheduled for $ExpireAt"
+} else {
+    Write-Host "Timer already set. Script will delete after $ExpireHours hours."
+}
